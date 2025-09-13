@@ -1,33 +1,56 @@
 cmake_minimum_required(VERSION 3.16)
-project(EventStreamer LANGUAGES CXX)
+project(StreamMatrix LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Enable Qt meta object tools
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
+# Point to Homebrew Qt (Apple Silicon default; change to /usr/local/opt/qt on Intel Macs)
+# set(CMAKE_PREFIX_PATH "/opt/homebrew/opt/qt")
 set(CMAKE_PREFIX_PATH "/usr/local/opt/qt")
 
-# Find Qt
 find_package(Qt6 COMPONENTS Widgets REQUIRED)
 
-# Find GStreamer
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(GST REQUIRED gstreamer-1.0 gstreamer-video-1.0 gstreamer-audio-1.0)
-
-include_directories(${GST_INCLUDE_DIRS})
-link_directories(${GST_LIBRARY_DIRS})
-
-add_executable(StreamMatrix
-    src/main.cpp
-    src/gui/MainWindow.cpp
-    src/gui/MainWindow.h
+# Include GL and pbutils to be safe; glimagesink lives in -base, but GL headers/libs are useful
+pkg_check_modules(GST REQUIRED
+  gstreamer-1.0
+  gstreamer-video-1.0
+  gstreamer-audio-1.0
+  gstreamer-pbutils-1.0
+  gstreamer-gl-1.0
 )
 
-target_link_libraries(StreamMatrix
-    Qt6::Widgets
-    ${GST_LIBRARIES}
+add_executable(stream_matrix
+  src/main.cpp
+  src/gui/MainWindow.h
+  src/gui/MainWindow.cpp
+  src/gui/VideoWidget.h
+  src/gui/VideoWidget.cpp
+  src/gui/AudioMeterWidget.h
+  src/gui/AudioMeterWidget.cpp
+  src/pipeline/DeviceManager.h
+  src/pipeline/DeviceManager.cpp
+  src/pipeline/PreviewPipeline.h
+  src/pipeline/PreviewPipeline.cpp
+)
+
+target_include_directories(stream_matrix PRIVATE
+  ${GST_INCLUDE_DIRS}
+  ${PROJECT_SOURCE_DIR}/src
+)
+
+target_link_libraries(stream_matrix
+  Qt6::Widgets
+  ${GST_LIBRARIES}
+)
+
+# Optional: put binary in build/bin
+set_target_properties(stream_matrix PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
