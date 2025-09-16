@@ -42,7 +42,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   previewRow->addWidget(videoGroup, 1);
   previewRow->addWidget(audioGroup, 0);
 
-  previewRow->setStretchFactor(videoGroup, 3);
+  previewRow->setStretchFactor(videoGroup, 4);
   previewRow->setStretchFactor(audioGroup, 1);
 
   root->addLayout(ctrlRow);

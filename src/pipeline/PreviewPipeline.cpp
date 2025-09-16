@@ -50,99 +50,99 @@ static GstElement* elementFromDevice(const GstDevice* dev,
   return nullptr;
 }
 
-void PreviewPipeline::start(const GstDevice* videoDev,
-                            const GstDevice* audioDev,
-                            VideoWidget* videoWidget,
+void PreviewPipeline::start(const GstDevice* video_dev,
+                            const GstDevice* audio_dev,
+                            VideoWidget* video_widget,
                             AudioMeterWidget* meters) {
-  stop();  // clean previous pipeline
+  stop();  // Clean previous pipeline
 
-  videoWidget_ = videoWidget;
+  videoWidget_ = video_widget;
   meters_ = meters;
 
-  // Elements
+  // 1. CREATE ALL ELEMENTS
+  // ======================
   pipeline_ = gst_pipeline_new("preview-pipeline");
 
-  // Video branch
-  GstElement* vsrc = elementFromDevice(videoDev, "vsrc");
+  // Video elements
+  GstElement* vsrc = elementFromDevice(video_dev, "vsrc");
   if (!vsrc) {
     vsrc = gst_element_factory_make("videotestsrc", "vsrc");
-    g_object_set(vsrc, "pattern", 0, nullptr);  // SMPTE color bars if desired
   }
   GstElement* vqueue = gst_element_factory_make("queue", "vqueue");
   GstElement* vconv = gst_element_factory_make("videoconvert", "vconv");
   videoSink_ = gst_element_factory_make("glimagesink", "vsink");
   if (!videoSink_) {
-    // Fallback sink if GL not present
     videoSink_ = gst_element_factory_make("autovideosink", "vsink");
   }
-  g_object_set(videoSink_, "sync", FALSE, nullptr);
 
-  // Audio branch
-  GstElement* asrc = elementFromDevice(audioDev, "asrc");
+  // Audio elements
+  GstElement* asrc = elementFromDevice(audio_dev, "asrc");
   if (!asrc) {
     asrc = gst_element_factory_make("audiotestsrc", "asrc");
-    g_object_set(asrc, "is-live", TRUE, nullptr);
   }
-  GstElement* acap_queue = gst_element_factory_make("queue", "acap_queue");
-
+  GstElement* capture_queue = gst_element_factory_make("queue", "capture_queue");
   GstElement* aconv = gst_element_factory_make("audioconvert", "aconv");
   GstElement* ares = gst_element_factory_make("audioresample", "ares");
-  level_ = gst_element_factory_make("level", "level");
   atee_ = gst_element_factory_make("tee", "atee");
-  GstElement* aqueue1 = gst_element_factory_make("queue", "aqueue1");
-  GstElement* aqueue2 = gst_element_factory_make("queue", "aqueue2");
+  GstElement* meter_queue = gst_element_factory_make("queue", "meter_queue");
+  level_ = gst_element_factory_make("level", "level");
   GstElement* asink = gst_element_factory_make("fakesink", "asink");
-  GstElement* mon = gst_element_factory_make("autoaudiosink", "mon");
-  g_object_set(level_,
-               "interval", guint64(50000000),  // 50 ms
-               "post-messages", TRUE,
-               nullptr);
+  GstElement* mon_queue = gst_element_factory_make("queue", "mon_queue");
+  GstElement* monitor = gst_element_factory_make("autoaudiosink", "monitor");
+
+  // Configure elements
+  g_object_set(level_, "interval", guint64(50000000), "post-messages", TRUE, nullptr);
+  g_object_set(capture_queue, "leaky", 2, "max-size-buffers", 0, "max-size-time", 0, nullptr);
   g_object_set(asink, "sync", FALSE, nullptr);
-  g_object_set(acap_queue, "leaky", 2, "max-size-buffers", 0, "max-size-time", 0, nullptr);
-  gst_bin_add_many(GST_BIN(pipeline_), asrc, acap_queue, aconv, ares, atee_, aqueue1, level_, asink, aqueue2, mon, nullptr);
-  gst_element_link_many(asrc, acap_queue, aconv, ares, atee_, nullptr);
+  g_object_set(videoSink_, "sync", FALSE, nullptr);
 
-  // Add to pipeline
-  gst_bin_add_many(GST_BIN(pipeline_), vsrc, vqueue, vconv, videoSink_, nullptr);
-  gst_bin_add_many(GST_BIN(pipeline_), asrc, aconv, ares, atee_, aqueue1, level_, asink, aqueue2, mon, nullptr);
+  // 2. ADD ALL ELEMENTS TO THE PIPELINE (ONCE!)
+  // ===========================================
+  gst_bin_add_many(GST_BIN(pipeline_),
+                   vsrc, vqueue, vconv, videoSink_,
+                   asrc, capture_queue, aconv, ares, atee_,
+                   meter_queue, level_, asink,
+                   mon_queue, monitor,
+                   nullptr);
 
-  // Link video
+  // 3. LINK THE ELEMENTS
+  // ====================
+  // Link video branch
   if (!gst_element_link_many(vsrc, vqueue, vconv, videoSink_, nullptr)) {
     qWarning() << "Failed to link video elements";
   }
 
-  // Link audio
-  if (!gst_element_link_many(aqueue1, level_, asink, nullptr)) {
+  // Link main audio branch up to the tee
+  if (!gst_element_link_many(asrc, capture_queue, aconv, ares, atee_, nullptr)) {
+    qWarning() << "Failed to link main audio chain";
+  }
+
+  // Link meter branch
+  if (!gst_element_link_many(meter_queue, level_, asink, nullptr)) {
     qWarning() << "Failed to link meter branch";
   }
 
-  if (!gst_element_link_many(asrc, aconv, ares, atee_, nullptr)){
-    qWarning() << "Failed to link audio elements";
-  }
-
-  if (!gst_element_link_many(aqueue2, mon, nullptr)){
+  // Link monitor branch
+  if (!gst_element_link(mon_queue, monitor)) {
     qWarning() << "Failed to link monitor branch";
   }
 
+  // Request tee pads and link them to the branches
   atee_src1_ = gst_element_request_pad_simple(atee_, "src_%u");
-  GstPad* sink1 = gst_element_get_static_pad(aqueue1, "sink");
-  gst_pad_link(atee_src1_, sink1);
-  gst_object_unref(sink1);
+  GstPad* meter_sink_pad = gst_element_get_static_pad(meter_queue, "sink");
+  gst_pad_link(atee_src1_, meter_sink_pad);
+  gst_object_unref(meter_sink_pad);
+
   atee_src2_ = gst_element_request_pad_simple(atee_, "src_%u");
-  GstPad* sink2 = gst_element_get_static_pad(aqueue2, "sink");
-  gst_pad_link(atee_src2_, sink2);
-  gst_object_unref(sink2);
+  GstPad* mon_sink_pad = gst_element_get_static_pad(mon_queue, "sink");
+  gst_pad_link(atee_src2_, mon_sink_pad);
+  gst_object_unref(mon_sink_pad);
 
-  // Bus for messages
+  // 4. START THE PIPELINE
+  // =====================
   bus_ = gst_element_get_bus(pipeline_);
-
-  // Set the pipeline to playing
   gst_element_set_state(pipeline_, GST_STATE_PLAYING);
-
-  // Set overlay ASAP (some sinks also send prepare-window-handle)
   setOverlayIfPossible();
-
-  // Start polling bus for errors and level messages
   busTimer_.start();
 }
 
@@ -162,13 +162,20 @@ void PreviewPipeline::handleLevelMessage(GstMessage* msg) {
   qDebug() << "LEVEL MSG";
   const GstStructure* s = gst_message_get_structure(msg);
   if(!s) return;
+  char* structure_string = gst_structure_to_string(s);
+  qDebug() << "Full Message Structure: " << structure_string;
+  g_free(structure_string);
   const GValue* peaks = gst_structure_get_value(s, "peak");
-  qDebug() << "PEAK TYPE " << G_VALUE_TYPE_NAME(peaks);
   if(!peaks) return;
+  const char* type_name = G_VALUE_TYPE_NAME(peaks);
+  if(!type_name) return;
+  qDebug() << "PEAK TYPE " << type_name;
+
 
   QVector<float> dbLevels;
   int n = 0;
-  if (GST_VALUE_HOLDS_LIST(peaks)){
+  if (strcmp(type_name, "GValueList") == 0){
+    qDebug() << "In ValueList logic";
     n = gst_value_list_get_size(peaks);
     dbLevels.reserve(n);
     for(int i = 0; i < n; ++i){
@@ -181,11 +188,12 @@ void PreviewPipeline::handleLevelMessage(GstMessage* msg) {
         dbLevels.push_back(-60.f);
       }
     }
-  } else if (GST_VALUE_HOLDS_ARRAY(peaks)){
+  } else if (strcmp(type_name, "GValueArray") == 0){
+    qDebug() << "In ValueArray logic";
     int n = gst_value_array_get_size(peaks);
     dbLevels.reserve(n);
     for(int i = 0; i < n; ++i){
-      const GValue* v = gst_value_list_get_value(peaks, i);
+      const GValue* v = gst_value_array_get_value(peaks, i);
       if (G_VALUE_HOLDS_DOUBLE(v)){
         dbLevels.push_back(static_cast<float>(g_value_get_double(v)));
       } else if (G_VALUE_HOLDS_FLOAT(v)){
@@ -196,11 +204,16 @@ void PreviewPipeline::handleLevelMessage(GstMessage* msg) {
     }
   } 
   else{
+    qDebug() << type_name << " didn't match ValueList or ArrayValue";
     return;
   }
 
   if (meters_) {
     meters_->setPeakLevels(dbLevels);
+    qDebug() << "Setting meters_ " << dbLevels;
+  }
+  else{
+    qDebug() << "No meters_ to set";
   }
 }
 

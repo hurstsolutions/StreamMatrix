@@ -5,7 +5,7 @@
 int main(int argc, char* argv[]) {
   // Initialize GStreamer before Qt uses any of it
   gst_init(&argc, &argv);
-
+  gst_value_array_get_type();
   QApplication app(argc, argv);
   MainWindow w;
   w.show();
