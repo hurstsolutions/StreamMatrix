@@ -3,6 +3,7 @@
 #include <gst/video/videooverlay.h>
 #include <gst/gstmessage.h>
 #include <gst/gst.h>
+#include <glib-object.h>
 
 PreviewPipeline::PreviewPipeline() {
   busTimer_.setInterval(30);
@@ -174,7 +175,7 @@ void PreviewPipeline::handleLevelMessage(GstMessage* msg) {
 
   QVector<float> dbLevels;
   int n = 0;
-  if (strcmp(type_name, "GValueList") == 0){
+  if (GST_VALUE_HOLDS_LIST(peaks)){
     qDebug() << "In ValueList logic";
     n = gst_value_list_get_size(peaks);
     dbLevels.reserve(n);
@@ -184,12 +185,14 @@ void PreviewPipeline::handleLevelMessage(GstMessage* msg) {
         dbLevels.push_back(static_cast<float>(g_value_get_double(v)));
       } else if (G_VALUE_HOLDS_FLOAT(v)){
         dbLevels.push_back(g_value_get_float(v));
+      } else if (G_VALUE_HOLDS_INT(v)) {
+        dbLevels.push_back(static_cast<float>(g_value_get_int(v)));
       } else{
         dbLevels.push_back(-60.f);
       }
     }
-  } else if (strcmp(type_name, "GValueArray") == 0){
-    qDebug() << "In ValueArray logic";
+  } else if (GST_VALUE_HOLDS_ARRAY(peaks)){
+    qDebug() << "In GstArray logic";
     int n = gst_value_array_get_size(peaks);
     dbLevels.reserve(n);
     for(int i = 0; i < n; ++i){
@@ -198,13 +201,42 @@ void PreviewPipeline::handleLevelMessage(GstMessage* msg) {
         dbLevels.push_back(static_cast<float>(g_value_get_double(v)));
       } else if (G_VALUE_HOLDS_FLOAT(v)){
         dbLevels.push_back(g_value_get_float(v));
+      } else if (G_VALUE_HOLDS_INT(v)) {
+        dbLevels.push_back(static_cast<float>(g_value_get_int(v)));
       } else{
         dbLevels.push_back(-60.f);
       }
     }
-  } 
-  else{
-    qDebug() << type_name << " didn't match ValueList or ArrayValue";
+  } else if(G_VALUE_HOLDS(peaks, G_TYPE_VALUE_ARRAY)){
+    qDebug() << "Using GLib GValueArray parsing";
+    GValueArray* arr = reinterpret_cast<GValueArray*>(g_value_get_boxed(peaks));
+    if(!arr){
+      qWarning() << "GValueArray is null";
+      return;
+    }
+    const guint n = arr->n_values;
+    dbLevels.reserve(static_cast<int>(n));
+    for (guint i = 0; i < n; ++i){
+      const GValue* v = g_value_array_get_nth(arr, i);
+      if (!v){
+        dbLevels.push_back(-60.f);
+        continue;
+      }
+      if (G_VALUE_HOLDS_DOUBLE(v)) {
+        dbLevels.push_back(static_cast<float>(g_value_get_double(v)));
+      } else if (G_VALUE_HOLDS_FLOAT(v)) {
+        dbLevels.push_back(g_value_get_float(v));
+      } else if (G_VALUE_HOLDS_INT(v)) {
+        dbLevels.push_back(static_cast<float>(g_value_get_int(v)));
+      } else {
+        dbLevels.push_back(-60.f);
+      }
+    }
+
+
+
+  } else{
+    qDebug() << "unsupported peak value type";
     return;
   }
 
