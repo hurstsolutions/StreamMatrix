@@ -57,9 +57,11 @@ void AudioMeterWidget::paintEvent(QPaintEvent*) {
     int yellowH = totalH * 12 / 60;  // -18..-6 -> 12/60
     int redH = totalH - greenH - yellowH;
 
-    QRect greenRect(x, 10 + (totalH - (greenH + yellowH + redH)), barWidth, greenH);
-    QRect yellowRect(x, greenRect.bottom() + 1, barWidth, yellowH);
-    QRect redRect(x, yellowRect.bottom() + 1, barWidth, redH);
+    QRect redRect(x, 10+ (totalH - (redH + yellowH + greenH)), barWidth, redH);
+    QRect yellowRect(x, redRect.bottom() + 1, barWidth, yellowH);
+    QRect greenRect(x, yellowRect.bottom() + 1, barWidth, greenH);
+
+
 
     // Draw filled portion with clipping
     p.save();
